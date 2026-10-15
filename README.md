@@ -9,7 +9,8 @@ National Weather Service, then shows:
 - **The forecast**: the median of the models, so one model that is way off barely moves it.
 - **The range**: lowest to highest model. A narrow range means the models agree.
 - **Confidence**: models within 4°F is "agree", within 8°F is "some disagreement", more is "disagree".
-- **Rain or snow**: how many models show any, next to the NWS percent chance.
+- **Chance of rain or snow**: the National Weather Service hourly chance.
+- **Inches**: the median model, plus the wettest model ("up to"). Snow is shown separately in inches of snow.
 
 ## How it runs
 

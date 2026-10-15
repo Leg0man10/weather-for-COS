@@ -41,7 +41,7 @@ MODELS = {
     "ncep_hrrr_conus": "HRRR (short-range, US)",  # best for the next ~18-48 hours
 }
 
-HOURLY_VARS = ["temperature_2m", "precipitation", "wind_speed_10m", "wind_gusts_10m", "weather_code"]
+HOURLY_VARS = ["temperature_2m", "precipitation", "snowfall", "wind_speed_10m", "wind_gusts_10m", "weather_code"]
 NWS_HEADERS = {"User-Agent": "personal-weather-blend/1.0", "Accept": "application/geo+json"}
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 LOG_DIR = os.path.join(DATA_DIR, "log")
@@ -94,6 +94,7 @@ def fetch_models(places):
 def fetch_nws(lat, lon):
     point = get_json(f"https://api.weather.gov/points/{lat},{lon}", NWS_HEADERS)["properties"]
     daily = get_json(point["forecast"], NWS_HEADERS)["properties"]["periods"]
+    hourly = get_json(point["forecastHourly"], NWS_HEADERS)["properties"]["periods"]
     alerts = get_json(f"https://api.weather.gov/alerts/active?point={lat},{lon}", NWS_HEADERS)["features"]
     stations = get_json(point["observationStations"], NWS_HEADERS)["features"]
     obs = None
@@ -121,6 +122,8 @@ def fetch_nws(lat, lon):
             for a in alerts
         ],
         "obs": obs,
+        # Chance of precipitation by local hour, keyed "YYYY-MM-DDTHH" to match the model times.
+        "hourly_pop": {p["startTime"][:13]: (p.get("probabilityOfPrecipitation") or {}).get("value") for p in hourly},
     }
 
 
@@ -135,7 +138,7 @@ def confidence(spread_f):
     return "low"
 
 
-def blend_hourly(times, per_model, hours=48):
+def blend_hourly(times, per_model, hourly_pop=None, hours=48):
     now = datetime.now(LOCAL_TZ).strftime("%Y-%m-%dT%H:00")
     start = next((i for i, t in enumerate(times) if t >= now), 0)
     rows = []
@@ -144,6 +147,7 @@ def blend_hourly(times, per_model, hours=48):
         precs = [m["precipitation"][i] for m in per_model.values() if m["precipitation"][i] is not None]
         winds = [m["wind_speed_10m"][i] for m in per_model.values() if m["wind_speed_10m"][i] is not None]
         gusts = [m["wind_gusts_10m"][i] for m in per_model.values() if m["wind_gusts_10m"][i] is not None]
+        snows = [m["snowfall"][i] for m in per_model.values() if m["snowfall"] and m["snowfall"][i] is not None]
         if not temps:
             continue
         rows.append({
@@ -152,6 +156,12 @@ def blend_hourly(times, per_model, hours=48):
             "lo": round(min(temps)), "hi": round(max(temps)),
             # Share of models predicting measurable precipitation (0.01 in or more).
             "wet": round(100 * sum(p >= 0.01 for p in precs) / len(precs)) if precs else None,
+            # Amounts in inches: the median model, and the wettest model so a few wet outliers aren't hidden.
+            "precip": round(statistics.median(precs), 2) if precs else None,
+            "precip_hi": round(max(precs), 2) if precs else None,
+            "snow": round(statistics.median(snows), 1) if snows else None,
+            # National Weather Service chance of precipitation for this hour, in percent.
+            "pop": (hourly_pop or {}).get(times[i][:13]),
             "wind": round(statistics.median(winds)) if winds else None,
             "gust": round(statistics.median(gusts)) if gusts else None,
         })
@@ -168,11 +178,13 @@ def daily_by_model(times, per_model):
     out = {}
     for m, cols in per_model.items():
         temps_at = {t: v for t, v in zip(times, cols["temperature_2m"]) if v is not None}
-        days = defaultdict(lambda: {"temps": [], "precip": 0.0})
-        for t, pr in zip(times, cols["precipitation"]):
+        days = defaultdict(lambda: {"temps": [], "precip": 0.0, "snow": 0.0})
+        snow_col = cols["snowfall"] or [None] * len(times)
+        for t, pr, sn in zip(times, cols["precipitation"], snow_col):
             if t in temps_at:
                 days[t[:10]]["temps"].append(temps_at[t])
                 days[t[:10]]["precip"] += pr or 0
+                days[t[:10]]["snow"] += sn or 0
         result = {}
         for date, d in days.items():
             if len(d["temps"]) < 20:  # skip partial days
@@ -182,7 +194,7 @@ def daily_by_model(times, per_model):
                      if (t[:10] == date and t[11:13] >= "18") or (t[:10] == next_day and t[11:13] <= "09")]
             if len(night) < 12:  # no full night of data after the last day
                 continue
-            result[date] = {"high": round(max(d["temps"])), "low": round(min(night)), "precip": round(d["precip"], 2)}
+            result[date] = {"high": round(max(d["temps"])), "low": round(min(night)), "precip": round(d["precip"], 2), "snow": round(d["snow"], 1)}
         out[m] = result
     return out
 
@@ -197,12 +209,16 @@ def blend_daily(by_model):
         highs = [e["high"] for e in entries]
         lows = [e["low"] for e in entries]
         wet = sum(e["precip"] >= 0.02 for e in entries)
+        precips = [e["precip"] for e in entries]
+        snows = [e.get("snow", 0) for e in entries]
         spread = max(max(highs) - min(highs), max(lows) - min(lows))
         rows.append({
             "date": date,
             "high": round(statistics.median(highs)), "high_range": [min(highs), max(highs)],
             "low": round(statistics.median(lows)), "low_range": [min(lows), max(lows)],
             "wet_models": wet, "models": len(entries),
+            "precip": round(statistics.median(precips), 2), "precip_hi": max(precips),
+            "snow": round(statistics.median(snows), 1), "snow_hi": max(snows),
             "confidence": confidence(spread),
         })
     return rows
@@ -215,12 +231,18 @@ def summarize(hourly, daily, nws):
     if today is None:
         return "Forecast unavailable."
     parts = [f"High {today['high']}° today, low {today['low']}° tonight."]
-    wet_hours = [h for h in hourly[:18] if h["wet"] is not None and h["wet"] >= 50]
-    if wet_hours:
-        first = datetime.fromisoformat(wet_hours[0]["t"]).strftime("%-I %p").lower()
-        parts.append(f"Most models show precipitation starting around {first}.")
+    next18 = hourly[:18]
+    has_pop = any(h.get("pop") is not None for h in next18)
+    likely = [h for h in next18 if (h.get("pop") or 0) >= 50] if has_pop else [h for h in next18 if (h["wet"] or 0) >= 50]
+    if likely:
+        first = datetime.fromisoformat(likely[0]["t"]).strftime("%-I %p").lower()
+        total = sum(h.get("precip") or 0 for h in next18)
+        snow = sum(h.get("snow") or 0 for h in next18)
+        amount = f" About {snow:.1f} in of snow." if snow >= 0.5 else (f" About {total:.2f} in." if total >= 0.01 else "")
+        parts.append(f"Rain or snow likely from around {first}.{amount}")
     else:
-        parts.append("Dry for the next 18 hours.")
+        peak = max((h.get("pop") or 0) for h in next18) if has_pop else 0
+        parts.append("Dry for the next 18 hours." if peak < 20 else f"Small chance of rain or snow (up to {peak}%) in the next 18 hours.")
     peak_gust = max((h["gust"] or 0) for h in hourly[:18]) if hourly else 0
     if peak_gust >= 35:
         parts.append(f"Gusts up to {peak_gust} mph.")
@@ -243,7 +265,7 @@ def run():
         except Exception as e:  # NWS has outages; the model blend still works without it
             print(f"NWS failed for {key}: {e}")
             nws = None
-        hourly = blend_hourly(times, per_model)
+        hourly = blend_hourly(times, per_model, nws["hourly_pop"] if nws else None)
         by_model = daily_by_model(times, per_model)
         daily = blend_daily(by_model)
         current = {
@@ -252,7 +274,7 @@ def run():
             "models": [MODELS[m] for m in per_model],
             "hourly": hourly, "daily": daily,
             "by_model": {MODELS[m]: days for m, days in by_model.items()},
-            "nws": nws,
+            "nws": {k: v for k, v in nws.items() if k != "hourly_pop"} if nws else None,
         }
         # The log keeps every forecast and observation, so we can score models later.
         log = {"place": key, "run_at": run_at, "by_model": by_model, "obs": nws["obs"] if nws else None}

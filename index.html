@@ -30,6 +30,8 @@ body { margin: 0; }
   --temp: #C4512B;         /* temperature: warm */
   --temp-band: rgba(196,81,43,.15);
   --rain: #2A72C8;         /* rain and snow: blue */
+  --rain-faint: rgba(42,114,200,.22);
+  --snow: #7C6FD6;         /* snow: icy violet */
   --good: #2F7D4F;
   --warn: #A86A00;
   --bad: #B3261E;
@@ -41,13 +43,13 @@ body { margin: 0; }
 }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
   --bg: #0E141B; --surface: #16202B; --fg: #E5EBF1; --muted: #9AA8B6; --line: #283544;
-  --granite: #E2825C; --sky: #74AEE0; --band: rgba(116,174,224,.20); --temp: #F08A5D; --temp-band: rgba(240,138,93,.20); --rain: #6FB0F2;
+  --granite: #E2825C; --sky: #74AEE0; --band: rgba(116,174,224,.20); --temp: #F08A5D; --temp-band: rgba(240,138,93,.20); --rain: #6FB0F2; --rain-faint: rgba(111,176,242,.25); --snow: #B3A8FF;
   --good: #6BC58F; --warn: #E9B04F; --bad: #F2847A; --warn-bg: #33270F; --bad-bg: #3A1A18;
   color-scheme: dark;
 } }
 :root[data-theme="dark"] {
   --bg: #0E141B; --surface: #16202B; --fg: #E5EBF1; --muted: #9AA8B6; --line: #283544;
-  --granite: #E2825C; --sky: #74AEE0; --band: rgba(116,174,224,.20); --temp: #F08A5D; --temp-band: rgba(240,138,93,.20); --rain: #6FB0F2;
+  --granite: #E2825C; --sky: #74AEE0; --band: rgba(116,174,224,.20); --temp: #F08A5D; --temp-band: rgba(240,138,93,.20); --rain: #6FB0F2; --rain-faint: rgba(111,176,242,.25); --snow: #B3A8FF;
   --good: #6BC58F; --warn: #E9B04F; --bad: #F2847A; --warn-bg: #33270F; --bad-bg: #3A1A18;
   color-scheme: dark;
 }
@@ -99,6 +101,11 @@ header h1 span { color: var(--granite); }
 .chart-box .tlabel { fill: var(--fg); font-weight: 500; }
 .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: .82rem; color: var(--muted); }
 .rain { color: var(--rain); font-weight: 700; }
+.snow { color: var(--snow); font-weight: 700; }
+.precip-note { margin: 0; font-size: .92rem; color: var(--muted); }
+.precip-note b { color: var(--fg); }
+.precip-note b.rain { color: var(--rain); }
+.precip-note b.snow { color: var(--snow); }
 .chart-box .note { fill: var(--muted); font-family: var(--font-body); font-size: 13px; }
 .legend i { display: inline-block; width: 14px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
 
@@ -207,8 +214,8 @@ function render() {
 
   html += `<section><h2>Temperature, next 48 hours</h2>${tempChart(d.hourly)}
     <div class="legend"><span><i style="background:var(--temp)"></i>Blended temperature</span><span><i style="background:var(--temp-band)"></i>Range across models</span></div></section>`;
-  html += `<section><h2>Rain &amp; snow, next 48 hours</h2>${precipChart(d.hourly, d.models.length)}
-    <div class="legend"><span><i style="background:var(--rain)"></i>Share of models showing rain or snow that hour</span></div></section>`;
+  html += `<section><h2>Rain &amp; snow, next 48 hours</h2>${precipNote(d.hourly)}${precipChart(d.hourly)}
+    <div class="legend"><span><i style="background:var(--rain);height:3px"></i>Chance of rain or snow (NWS)</span><span><i style="background:var(--rain)"></i>Expected amount</span><span><i style="background:var(--rain-faint)"></i>Up to (wettest model)</span><span><i style="background:var(--snow)"></i>Snow hours</span></div></section>`;
 
   html += `<section><h2>This week</h2><div class="days">${week(d, nws)}</div></section>`;
   html += `<section><h2>What each model says</h2>${modelTable(d)}</section>`;
@@ -219,7 +226,8 @@ function render() {
       <li><b>The forecast number</b> is the median of the models, so one model that is way off barely moves it.</li>
       <li><b>The range</b> is the lowest and highest model. A narrow range means the models agree.</li>
       <li><b>Confidence</b>: models within 4° of each other is "agree", within 8° is "some disagreement", more than that is "disagree".</li>
-      <li><b>Rain and snow</b> is the share of models showing any. The NWS percent is the forecasters' chance at a given spot. When they differ, that is useful: the forecast is uncertain.</li>
+      <li><b>Chance of rain or snow</b> comes from the National Weather Service: the chance of at least 0.01 in at a given spot in that hour.</li>
+      <li><b>Inches</b> come from the models. "Expected" is the median model; "up to" is the wettest model. Rain amounts are liquid; snow is shown separately as snow depth (roughly 10 times the liquid amount).</li>
       <li><b>Low tonight</b> is the coldest point from 6 pm to 9 am, which is how people read a low.</li>
     </ul>
     <p>Every refresh is logged. After about a month there will be enough history to score which model is most accurate here.</p>
@@ -277,29 +285,59 @@ function tempChart(rows) {
   return `<div class="chart-box">${s}</svg></div>`;
 }
 
-function precipChart(rows, nModels) {
+// Inches: two decimals for rain, one for snow; "a trace" for tiny amounts.
+const inches = v => v >= 0.01 ? v.toFixed(2) + " in" : "a trace";
+
+function precipNote(rows) {
+  const pops = rows.map(r => r.pop).filter(v => v != null);
+  const total = rows.reduce((a, r) => a + (r.precip || 0), 0);
+  const hiTotal = rows.reduce((a, r) => a + (r.precip_hi || 0), 0);
+  const snow = rows.reduce((a, r) => a + (r.snow || 0), 0);
+  const peakPop = pops.length ? Math.max(...pops) : null;
+  const parts = [];
+  if (peakPop != null) parts.push(`Highest chance: <b class="${peakPop >= 20 ? "rain" : ""}">${peakPop}%</b>`);
+  parts.push(total >= 0.01 ? `Expected total: <b class="rain">${inches(total)}</b> (up to ${inches(hiTotal)})`
+    : hiTotal >= 0.01 ? `Expected total: <b>none</b> (wettest model ${inches(hiTotal)})` : `Expected total: <b>none</b>`);
+  if (snow >= 0.1) parts.push(`Snow: <b class="snow">${snow.toFixed(1)} in</b>`);
+  return `<p class="precip-note">${parts.join(" · ")}</p>`;
+}
+
+function precipChart(rows) {
   if (!rows.length) return `<div class="empty">No hourly data.</div>`;
-  const W = 680, H = 140, L = 34, R = 10, T = 14, plotH = 96;
+  // Top panel: chance (%) as a line. Bottom panel: amount (inches) as bars.
+  const W = 680, H = 230, L = 40, R = 10, T = 14, popH = 80, gap = 26, amtTop = T + popH + gap, amtH = 70;
   const x = i => L + (i / (rows.length - 1)) * (W - L - R);
-  const y = pct => T + (1 - pct / 100) * plotH;
+  const yp = pct => T + (1 - Math.min(pct, 100) / 100) * popH;
+  const maxAmt = Math.max(0.1, ...rows.map(r => r.precip_hi || 0));
+  const top = maxAmt <= 0.1 ? 0.1 : maxAmt <= 0.25 ? 0.25 : Math.ceil(maxAmt * 4) / 4;
+  const ya = v => amtTop + (1 - v / top) * amtH;
   const bw = (W - L - R) / rows.length;
-  let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Share of models showing rain or snow for the next 48 hours">`;
-  [0, 50, 100].forEach(v => {
-    s += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="var(--line)"/><text x="${L - 6}" y="${y(v) + 4}" text-anchor="end">${v}%</text>`;
-  });
-  s += timeAxis(rows, x, T, T + plotH, H, false);
-  const wet = rows.filter(r => r.wet);
-  wet.forEach(r => {
-    const i = rows.indexOf(r);
-    s += `<rect x="${x(i) - bw / 2 + 1}" y="${y(r.wet)}" width="${Math.max(1, bw - 2)}" height="${(r.wet / 100) * plotH}" fill="var(--rain)" rx="1.5"/>`;
-  });
-  if (!wet.length) {
-    s += `<text class="note" x="${(L + W - R) / 2}" y="${T + plotH / 2 - 6}" text-anchor="middle">None of the ${nModels} models show rain or snow in the next 48 hours.</text>`;
+  let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Chance and amount of rain or snow for the next 48 hours">`;
+  // chance grid
+  [0, 50, 100].forEach(v => { s += `<line x1="${L}" x2="${W - R}" y1="${yp(v)}" y2="${yp(v)}" stroke="var(--line)"/><text x="${L - 6}" y="${yp(v) + 4}" text-anchor="end">${v}%</text>`; });
+  // amount grid
+  [0, top / 2, top].forEach(v => { s += `<line x1="${L}" x2="${W - R}" y1="${ya(v)}" y2="${ya(v)}" stroke="var(--line)"/><text x="${L - 6}" y="${ya(v) + 4}" text-anchor="end">${v === 0 ? "0" : v.toFixed(v < 0.1 ? 3 : 2).replace(/0+$/, "").replace(/^0/, "")}"</text>`; });
+  s += `<text x="${W - R}" y="${amtTop - 8}" text-anchor="end">inches</text>`;
+  s += timeAxis(rows, x, T, amtTop + amtH, H, false);
+  // chance line + soft area
+  const pts = rows.map((r, i) => r.pop == null ? null : [x(i), yp(r.pop)]);
+  const seg = pts.filter(Boolean);
+  if (seg.length > 1) {
+    s += `<polygon points="${seg[0][0]},${yp(0)} ${seg.map(p => p.join(",")).join(" ")} ${seg[seg.length - 1][0]},${yp(0)}" fill="var(--rain-faint)" stroke="none"/>`;
+    s += `<polyline points="${seg.map(p => p.join(",")).join(" ")}" fill="none" stroke="var(--rain)" stroke-width="2" stroke-linejoin="round"/>`;
+    const peak = rows.reduce((a, r, i) => (r.pop ?? -1) > (rows[a].pop ?? -1) ? i : a, 0);
+    if ((rows[peak].pop || 0) >= 10) s += `<text class="tlabel" x="${Math.min(Math.max(x(peak), L + 20), W - R - 20)}" y="${Math.max(yp(rows[peak].pop) - 6, 10)}" text-anchor="middle" style="fill:var(--rain)">${rows[peak].pop}%</text>`;
   } else {
-    const peak = wet.reduce((a, b) => (b.wet > a.wet ? b : a));
-    const i = rows.indexOf(peak);
-    s += `<text class="tlabel" x="${Math.min(Math.max(x(i), L + 20), W - R - 20)}" y="${Math.max(y(peak.wet) - 5, 10)}" text-anchor="middle" style="fill:var(--rain)">${peak.wet}%</text>`;
+    s += `<text class="note" x="${(L + W - R) / 2}" y="${T + popH / 2}" text-anchor="middle">Hourly chance not available right now.</text>`;
   }
+  // amount bars: faint = wettest model, solid = median; violet when models show snow
+  let anyAmt = false;
+  rows.forEach((r, i) => {
+    const bx = x(i) - bw / 2 + 1, w = Math.max(1, bw - 2);
+    if ((r.precip_hi || 0) >= 0.005) { anyAmt = true; s += `<rect x="${bx}" y="${ya(Math.min(r.precip_hi, top))}" width="${w}" height="${ya(0) - ya(Math.min(r.precip_hi, top))}" fill="var(--rain-faint)"/>`; }
+    if ((r.precip || 0) >= 0.005) s += `<rect x="${bx}" y="${ya(Math.min(r.precip, top))}" width="${w}" height="${ya(0) - ya(Math.min(r.precip, top))}" fill="${(r.snow || 0) > 0 ? "var(--snow)" : "var(--rain)"}"/>`;
+  });
+  if (!anyAmt) s += `<text class="note" x="${(L + W - R) / 2}" y="${amtTop + amtH / 2 + 4}" text-anchor="middle">No model expects measurable rain or snow.</text>`;
   return `<div class="chart-box">${s}</svg></div>`;
 }
 
@@ -316,7 +354,7 @@ function week(d, nws) {
     return `<div class="day">
       <div class="dn">${r.date === today ? "Today" : dowOf(r.date)}<small>${+r.date.slice(5, 7)}/${+r.date.slice(8)}</small></div>
       <div class="txt">${esc(p ? p.short : (night ? night.short : ""))}
-        <small><span class="${r.wet_models ? "rain" : ""}">${r.wet_models} of ${r.models}</span> models show rain/snow${pop != null ? ` · NWS <span class="${pop >= 20 ? "rain" : ""}">${pop}%</span>` : ""}</small>
+        <small>${pop != null ? `<span class="${pop >= 20 ? "rain" : ""}">${pop}% chance</span> · ` : ""}${r.precip != null ? (r.precip >= 0.01 ? `<span class="rain">${inches(r.precip)}</span>${r.precip_hi > r.precip ? ` (up to ${inches(r.precip_hi)})` : ""}` : r.precip_hi >= 0.01 ? `none (up to ${inches(r.precip_hi)})` : "no rain expected") : `${r.wet_models} of ${r.models} models show rain/snow`}${r.snow >= 0.1 ? ` · <span class="snow">${r.snow.toFixed(1)} in snow</span>` : ""}</small>
         <div class="bar" aria-hidden="true"><span style="left:${pct(r.low)}%;right:${100 - pct(r.high)}%"></span></div></div>
       <div class="hilo"><b class="num">${r.high}°</b> <span class="num">${r.low}°</span><br><span class="pill c-${r.confidence}">${r.confidence === "high" ? "Agree" : r.confidence === "medium" ? "Some spread" : "Disagree"}</span></div>
     </div>`;
