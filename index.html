@@ -1,0 +1,329 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#F2F4F6" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0E141B" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Weather">
+<title>Springs &amp; Falcon Weather</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22%3E%3Cpath d=%22M2 28 L12 10 L17 18 L21 13 L30 28 Z%22 fill=%22%23A84B2B%22/%3E%3Ccircle cx=%2224%22 cy=%227%22 r=%224%22 fill=%22%232C6AA0%22/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Atkinson+Hyperlegible:wght@400;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; }
+:root { padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); }
+[hidden] { display: none !important; }
+/* Layout: one narrow column, phone first. Summary, then today, then the next 48 hours, then the week, then the evidence. */
+:root {
+  --bg: #F2F4F6;
+  --surface: #FFFFFF;
+  --fg: #16202A;
+  --muted: #5A6775;
+  --line: #DCE2E8;
+  --granite: #A84B2B;      /* Pikes Peak granite: the accent */
+  --sky: #2C6AA0;          /* temperature line, precip */
+  --band: rgba(44,106,160,.16);
+  --good: #2F7D4F;
+  --warn: #A86A00;
+  --bad: #B3261E;
+  --warn-bg: #FFF4DE;
+  --bad-bg: #FDECEA;
+  --font-display: "Bricolage Grotesque", "Avenir Next", "Segoe UI", system-ui, sans-serif;
+  --font-body: "Atkinson Hyperlegible", "Segoe UI", system-ui, sans-serif;
+  --font-data: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0E141B; --surface: #16202B; --fg: #E5EBF1; --muted: #9AA8B6; --line: #283544;
+  --granite: #E2825C; --sky: #74AEE0; --band: rgba(116,174,224,.20);
+  --good: #6BC58F; --warn: #E9B04F; --bad: #F2847A; --warn-bg: #33270F; --bad-bg: #3A1A18;
+  color-scheme: dark;
+} }
+:root[data-theme="dark"] {
+  --bg: #0E141B; --surface: #16202B; --fg: #E5EBF1; --muted: #9AA8B6; --line: #283544;
+  --granite: #E2825C; --sky: #74AEE0; --band: rgba(116,174,224,.20);
+  --good: #6BC58F; --warn: #E9B04F; --bad: #F2847A; --warn-bg: #33270F; --bad-bg: #3A1A18;
+  color-scheme: dark;
+}
+body { background: var(--bg); color: var(--fg); font: 16px/1.5 var(--font-body); }
+.wrap { max-width: 720px; margin: 0 auto; padding-block: 20px 48px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid; gap: 22px; }
+h1, h2 { font-family: var(--font-display); text-wrap: balance; margin: 0; }
+h2 { font-size: 1.05rem; font-weight: 700; letter-spacing: .01em; }
+.label { font-size: .72rem; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); font-weight: 700; }
+.num { font-variant-numeric: tabular-nums; }
+section { display: grid; gap: 10px; min-width: 0; }
+
+/* Header + place switch */
+header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
+header h1 { font-size: 1.35rem; font-weight: 700; }
+header h1 span { color: var(--granite); }
+.switch { display: inline-flex; background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 3px; }
+.switch button { font: 700 .9rem var(--font-body); border: 0; background: transparent; color: var(--muted); padding: 7px 14px; border-radius: 999px; cursor: pointer; }
+.switch button[aria-pressed="true"] { background: var(--fg); color: var(--bg); }
+.switch button:focus-visible, button:focus-visible { outline: 2px solid var(--granite); outline-offset: 2px; }
+
+/* Alerts and status */
+.alert { border-radius: 10px; padding: 10px 14px; border-left: 4px solid var(--bad); background: var(--bad-bg); }
+.alert.moderate { border-color: var(--warn); background: var(--warn-bg); }
+.alert strong { display: block; }
+.alert small { color: var(--muted); }
+.stale { font-size: .88rem; color: var(--warn); }
+
+/* Hero */
+.hero { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 18px; display: grid; gap: 14px; }
+.now { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; }
+.now .temp { font-family: var(--font-display); font-size: 3.4rem; line-height: 1; font-weight: 700; }
+.now .cond { color: var(--muted); }
+.summary { font-family: var(--font-display); font-size: 1.3rem; line-height: 1.35; font-weight: 500; margin: 0; max-width: 60ch; }
+.hl { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; }
+.hl div { display: grid; gap: 2px; }
+.hl .big { font-family: var(--font-display); font-size: 1.6rem; font-weight: 700; }
+.hl .range { font-size: .85rem; color: var(--muted); }
+.pill { display: inline-flex; align-items: center; gap: 6px; font-size: .8rem; font-weight: 700; padding: 3px 10px; border-radius: 999px; border: 1px solid currentColor; width: fit-content; }
+.pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.c-high { color: var(--good); } .c-medium { color: var(--warn); } .c-low { color: var(--bad); }
+.compare { font-size: .92rem; color: var(--muted); border-top: 1px solid var(--line); padding-top: 12px; margin: 0; }
+
+/* 48h chart */
+.chart-box { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 12px 8px 6px; }
+.chart-box svg { display: block; width: 100%; min-width: 560px; height: auto; }
+.chart-box text { font-family: var(--font-data); font-size: 11px; fill: var(--muted); }
+.chart-box .tlabel { fill: var(--fg); font-weight: 500; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: .82rem; color: var(--muted); }
+.legend i { display: inline-block; width: 14px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
+
+/* Week */
+.days { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; }
+.day { display: grid; grid-template-columns: 4.2rem 1fr auto; gap: 4px 12px; align-items: center; padding: 12px 14px; border-top: 1px solid var(--line); }
+.day:first-child { border-top: 0; }
+.day .dn { font-weight: 700; }
+.day .dn small { display: block; font-weight: 400; color: var(--muted); font-size: .78rem; }
+.day .txt { min-width: 0; font-size: .92rem; }
+.day .txt small { display: block; color: var(--muted); }
+.bar { position: relative; height: 8px; border-radius: 4px; background: var(--line); margin-top: 6px; }
+.bar span { position: absolute; top: 0; bottom: 0; border-radius: 4px; background: linear-gradient(90deg, var(--sky), var(--granite)); }
+.day .hilo { text-align: right; white-space: nowrap; }
+.day .hilo b { font-family: var(--font-display); font-size: 1.15rem; }
+.day .hilo span { color: var(--muted); }
+.day .pill { font-size: .7rem; padding: 1px 8px; justify-self: end; }
+
+/* Models table */
+.tbl { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 16px; }
+table { border-collapse: collapse; width: 100%; font-size: .9rem; }
+th, td { padding: 9px 12px; text-align: right; border-top: 1px solid var(--line); white-space: nowrap; }
+th:first-child, td:first-child { text-align: left; }
+thead th { border-top: 0; font-size: .72rem; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+tr.blend td { font-weight: 700; background: color-mix(in srgb, var(--sky) 8%, transparent); }
+details { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 12px 16px; }
+summary { cursor: pointer; font-weight: 700; }
+details p, details li { color: var(--muted); max-width: 65ch; }
+.empty { background: var(--surface); border: 1px dashed var(--line); border-radius: 16px; padding: 24px; color: var(--muted); }
+footer { font-size: .8rem; color: var(--muted); }
+@media (prefers-reduced-motion: no-preference) { .hero, .days { transition: opacity .2s; } }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header>
+    <h1>Springs <span>&amp;</span> Falcon</h1>
+    <div class="switch" role="group" aria-label="Choose a place">
+      <button id="btn-colorado-springs" data-place="colorado-springs" aria-pressed="true">Colorado Springs</button>
+      <button id="btn-falcon" data-place="falcon" aria-pressed="false">Falcon</button>
+    </div>
+  </header>
+  <main id="app" class="wrap" style="padding:0;gap:22px">
+    <div class="empty">Loading the latest blended forecast…</div>
+  </main>
+  <footer>Forecasts blended from up to 6 weather models (via Open-Meteo) and the National Weather Service. Updated every hour.</footer>
+</div>
+
+<script>
+const PLACES = ["colorado-springs", "falcon"];
+const state = { place: "colorado-springs", data: {} };
+try { const p = localStorage.getItem("place"); if (PLACES.includes(p)) state.place = p; } catch (e) {}
+
+const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+// Forecast times are Colorado local strings like "2026-10-15T14:00"; read them as-is so a viewer elsewhere still sees Colorado time.
+const hourOf = t => +t.slice(11, 13);
+const fmtHour = h => (h % 12 || 12) + (h < 12 ? "a" : "p");
+const dowOf = d => DOW[new Date(d + "T12:00:00Z").getUTCDay()];
+const todayCO = () => new Intl.DateTimeFormat("en-CA", { timeZone: "America/Denver" }).format(new Date());
+const confWord = { high: "Models agree", medium: "Some disagreement", low: "Models disagree" };
+
+function ago(iso) {
+  const mins = Math.round((Date.now() - new Date(iso.replace("Z", ":00Z")).getTime()) / 60000);
+  if (mins < 60) return mins + " min ago";
+  const h = Math.round(mins / 60);
+  return h + (h === 1 ? " hour ago" : " hours ago");
+}
+
+function render() {
+  PLACES.forEach(p => document.getElementById("btn-" + p).setAttribute("aria-pressed", String(p === state.place)));
+  const d = state.data[state.place];
+  const app = document.getElementById("app");
+  if (d === undefined) return;
+  if (d === null) { app.innerHTML = `<div class="empty">Could not load the forecast for this place. Check your connection, or the hourly update on GitHub may not have run yet.</div>`; return; }
+
+  const nws = d.nws || {};
+  const today = todayCO();
+  const t = d.daily.find(r => r.date === today) || d.daily[0];
+  const staleHrs = (Date.now() - new Date(d.updated.replace("Z", ":00Z")).getTime()) / 3.6e6;
+  const other = state.data[PLACES.find(p => p !== state.place)];
+  let html = "";
+
+  (nws.alerts || []).forEach(a => {
+    const cls = a.severity === "Extreme" || a.severity === "Severe" ? "" : "moderate";
+    const ends = a.ends ? new Date(a.ends).toLocaleString("en-US", { timeZone: "America/Denver", weekday: "short", hour: "numeric", minute: "2-digit" }) : "";
+    html += `<div class="alert ${cls}" role="alert"><strong>${esc(a.event)}</strong><small>National Weather Service${ends ? " · until " + esc(ends) : ""}</small></div>`;
+  });
+
+  // Hero: what it is now, the one-line plan, today's numbers with their range.
+  const obs = nws.obs;
+  html += `<section class="hero" aria-label="Today">
+    <div class="now">
+      ${obs && obs.temp_f != null ? `<span class="temp num">${obs.temp_f}°</span><span class="cond">${esc(obs.text || "")}${obs.wind_mph != null ? ` · wind ${obs.wind_mph} mph` : ""}<br><small>Measured at ${esc(obs.station)} station, ${ago(obs.time.slice(0, 16) + "Z")}</small></span>` : `<span class="cond">No live station reading right now.</span>`}
+    </div>
+    <p class="summary">${esc(d.summary)}</p>
+    ${t ? `<div class="hl">
+      <div><span class="label">High today</span><span class="big num">${t.high}°</span><span class="range">models: ${t.high_range[0]}–${t.high_range[1]}°</span></div>
+      <div><span class="label">Low tonight</span><span class="big num">${t.low}°</span><span class="range">models: ${t.low_range[0]}–${t.low_range[1]}°</span></div>
+      <div><span class="label">Confidence</span><span class="pill c-${t.confidence}">${confWord[t.confidence]}</span><span class="range">${t.wet_models} of ${t.models} models show rain or snow</span></div>
+    </div>` : ""}
+    ${compareLine(d, other, today)}
+  </section>`;
+  if (staleHrs > 3) html += `<p class="stale">This forecast is ${Math.round(staleHrs)} hours old. The automatic refresh may have failed.</p>`;
+
+  html += `<section><h2>Next 48 hours</h2>${chart(d.hourly)}
+    <div class="legend"><span><i style="background:var(--sky)"></i>Blended temperature</span><span><i style="background:var(--band)"></i>Range across models</span><span><i style="background:var(--granite);opacity:.55"></i>Share of models showing precipitation</span></div></section>`;
+
+  html += `<section><h2>This week</h2><div class="days">${week(d, nws)}</div></section>`;
+  html += `<section><h2>What each model says</h2>${modelTable(d)}</section>`;
+
+  html += `<details><summary>How this works</summary>
+    <p>Most weather apps show one model. This page asks ${d.models.length} independent models (${esc(d.models.join(", "))}) and the National Weather Service.</p>
+    <ul>
+      <li><b>The forecast number</b> is the median of the models, so one model that is way off barely moves it.</li>
+      <li><b>The range</b> is the lowest and highest model. A narrow range means the models agree.</li>
+      <li><b>Confidence</b>: models within 4° of each other is "agree", within 8° is "some disagreement", more than that is "disagree".</li>
+      <li><b>Rain and snow</b> is the share of models showing any. The NWS percent is the forecasters' chance at a given spot. When they differ, that is useful: the forecast is uncertain.</li>
+      <li><b>Low tonight</b> is the coldest point from 6 pm to 9 am, which is how people read a low.</li>
+    </ul>
+    <p>Every refresh is logged. After about a month there will be enough history to score which model is most accurate here.</p>
+  </details>`;
+  html += `<p class="label" style="margin:0">Updated ${ago(d.updated)}</p>`;
+  app.innerHTML = html;
+}
+
+function compareLine(d, other, today) {
+  if (!other) return "";
+  const a = d.daily.find(r => r.date === today), b = other.daily.find(r => r.date === today);
+  if (!a || !b) return "";
+  const gust = h => Math.max(0, ...h.slice(0, 18).map(x => x.gust || 0));
+  const dl = a.low - b.low, dg = gust(d.hourly) - gust(other.hourly);
+  const parts = [];
+  if (Math.abs(dl) >= 2) parts.push(`${Math.abs(dl)}° ${dl < 0 ? "colder" : "warmer"} tonight`);
+  if (Math.abs(dg) >= 5) parts.push(`gusts ${Math.abs(dg)} mph ${dg > 0 ? "stronger" : "weaker"}`);
+  return `<p class="compare">Compared with ${esc(other.place)}: ${parts.length ? parts.join(", ") : "about the same"}.</p>`;
+}
+
+function chart(rows) {
+  if (!rows.length) return `<div class="empty">No hourly data.</div>`;
+  const W = 680, H = 250, L = 34, R = 10, T = 22, tempH = 140, pTop = T + tempH + 22, pH = 40;
+  const lo = Math.min(...rows.map(r => r.lo)) - 3, hi = Math.max(...rows.map(r => r.hi)) + 3;
+  const x = i => L + (i / (rows.length - 1)) * (W - L - R);
+  const y = v => T + (1 - (v - lo) / (hi - lo)) * tempH;
+  const step = (hi - lo) > 30 ? 10 : 5;
+  let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Temperature and precipitation for the next 48 hours">`;
+  for (let v = Math.ceil(lo / step) * step; v <= hi; v += step) {
+    s += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="var(--line)" stroke-width="1"/><text x="${L - 6}" y="${y(v) + 4}" text-anchor="end">${v}°</text>`;
+  }
+  if (lo < 32 && hi > 32) s += `<line x1="${L}" x2="${W - R}" y1="${y(32)}" y2="${y(32)}" stroke="var(--sky)" stroke-dasharray="3 4" stroke-width="1"/><text x="${W - R}" y="${y(32) - 4}" text-anchor="end" fill="var(--sky)">freezing</text>`;
+  const band = rows.map((r, i) => `${x(i)},${y(r.hi)}`).join(" ") + " " + rows.map((r, i) => `${x(i)},${y(r.lo)}`).reverse().join(" ");
+  s += `<polygon points="${band}" fill="var(--band)" stroke="none"/>`;
+  s += `<polyline points="${rows.map((r, i) => `${x(i)},${y(r.temp)}`).join(" ")}" fill="none" stroke="var(--sky)" stroke-width="2.5" stroke-linejoin="round"/>`;
+  // Precip agreement bars
+  const bw = (W - L - R) / rows.length;
+  s += `<text x="${L - 6}" y="${pTop + pH}" text-anchor="end">0%</text><text x="${L - 6}" y="${pTop + 8}" text-anchor="end">100%</text>`;
+  s += `<line x1="${L}" x2="${W - R}" y1="${pTop + pH}" y2="${pTop + pH}" stroke="var(--line)"/>`;
+  rows.forEach((r, i) => { if (r.wet) s += `<rect x="${x(i) - bw / 2 + 1}" y="${pTop + pH * (1 - r.wet / 100)}" width="${Math.max(1, bw - 2)}" height="${pH * r.wet / 100}" fill="var(--granite)" opacity=".55"/>`; });
+  // Labels every 6 hours: time, temp, gust
+  rows.forEach((r, i) => {
+    const h = hourOf(r.t);
+    if (h % 6 !== 0) return;
+    const day = h === 0 ? dowOf(r.t.slice(0, 10)) : fmtHour(h);
+    s += `<line x1="${x(i)}" x2="${x(i)}" y1="${T}" y2="${pTop + pH}" stroke="var(--line)" stroke-dasharray="2 3"/>`;
+    s += `<circle cx="${x(i)}" cy="${y(r.temp)}" r="3.5" fill="var(--sky)"/><text class="tlabel" x="${x(i)}" y="${y(r.temp) - 8}" text-anchor="middle">${r.temp}°</text>`;
+    s += `<text x="${x(i)}" y="${H - 6}" text-anchor="middle">${day}${r.gust ? " · " + r.gust + "mph" : ""}</text>`;
+  });
+  s += `<text x="${L}" y="12">${fmtHour(hourOf(rows[0].t))} now</text>`;
+  return `<div class="chart-box">${s}</svg></div>`;
+}
+
+function week(d, nws) {
+  const rows = d.daily;
+  const lo = Math.min(...rows.map(r => r.low_range[0])), hi = Math.max(...rows.map(r => r.high_range[1]));
+  const pct = v => ((v - lo) / (hi - lo || 1)) * 100;
+  const today = todayCO();
+  return rows.map(r => {
+    const p = (nws.periods || []).find(p => p.date === r.date && p.day);
+    const night = (nws.periods || []).find(p => p.date === r.date && !p.day);
+    const pops = [p && p.pop, night && night.pop].filter(v => v != null);
+    const pop = pops.length ? Math.max(...pops) : null;
+    return `<div class="day">
+      <div class="dn">${r.date === today ? "Today" : dowOf(r.date)}<small>${+r.date.slice(5, 7)}/${+r.date.slice(8)}</small></div>
+      <div class="txt">${esc(p ? p.short : (night ? night.short : ""))}
+        <small>${r.wet_models} of ${r.models} models show rain/snow${pop != null ? ` · NWS ${pop}%` : ""}</small>
+        <div class="bar" aria-hidden="true"><span style="left:${pct(r.low)}%;right:${100 - pct(r.high)}%"></span></div></div>
+      <div class="hilo"><b class="num">${r.high}°</b> <span class="num">${r.low}°</span><br><span class="pill c-${r.confidence}">${r.confidence === "high" ? "Agree" : r.confidence === "medium" ? "Some spread" : "Disagree"}</span></div>
+    </div>`;
+  }).join("");
+}
+
+function modelTable(d) {
+  const dates = d.daily.slice(0, 3).map(r => r.date);
+  const today = todayCO();
+  const label = dt => dt === today ? "Today" : dowOf(dt);
+  let s = `<div class="tbl"><table><thead><tr><th>Source</th>${dates.map(dt => `<th>${label(dt)} hi / lo</th>`).join("")}</tr></thead><tbody>`;
+  s += `<tr class="blend"><td>Blend (median)</td>${d.daily.slice(0, 3).map(r => `<td class="num">${r.high}° / ${r.low}°</td>`).join("")}</tr>`;
+  for (const [m, days] of Object.entries(d.by_model)) {
+    s += `<tr><td>${esc(m)}</td>${dates.map(dt => days[dt] ? `<td class="num">${days[dt].high}° / ${days[dt].low}°</td>` : `<td>–</td>`).join("")}</tr>`;
+  }
+  const nws = d.nws && d.nws.periods || [];
+  s += `<tr><td>National Weather Service</td>${dates.map(dt => {
+    const a = nws.find(p => p.date === dt && p.day), b = nws.find(p => p.date === dt && !p.day);
+    return `<td class="num">${a ? a.temp + "°" : "–"} / ${b ? b.temp + "°" : "–"}</td>`;
+  }).join("")}</tr></tbody></table></div>`;
+  return s;
+}
+
+document.querySelectorAll(".switch button").forEach(b => b.addEventListener("click", () => {
+  state.place = b.dataset.place;
+  try { localStorage.setItem("place", state.place); } catch (e) {}
+  render();
+}));
+
+// The forecast files live next to this page and are rewritten every hour by GitHub Actions.
+async function load() {
+  await Promise.all(PLACES.map(async p => {
+    try {
+      const res = await fetch(`data/${p}.json?t=${Date.now()}`, { cache: "no-store" });
+      state.data[p] = res.ok ? await res.json() : null;
+    } catch (e) {
+      if (state.data[p] === undefined) state.data[p] = null;
+    }
+  }));
+  render();
+}
+load();
+setInterval(load, 10 * 60 * 1000);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) load(); });
+</script>
+</body>
+</html>
