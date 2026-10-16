@@ -97,12 +97,17 @@ def fetch_nws(lat, lon):
     hourly = get_json(point["forecastHourly"], NWS_HEADERS)["properties"]["periods"]
     alerts = get_json(f"https://api.weather.gov/alerts/active?point={lat},{lon}", NWS_HEADERS)["features"]
     stations = get_json(point["observationStations"], NWS_HEADERS)["features"]
-    obs = None
+    obs = observed = None
     if stations:
         station_id = stations[0]["properties"]["stationIdentifier"]
         p = get_json(f"https://api.weather.gov/stations/{station_id}/observations/latest", NWS_HEADERS)["properties"]
         temp_c = (p.get("temperature") or {}).get("value")
         wind_kmh = (p.get("windSpeed") or {}).get("value")
+        try:
+            observed = fetch_observed(station_id)
+        except Exception as e:
+            print(f"Observed high/low failed for {station_id}: {e}")
+            observed = None
         obs = {
             "station": station_id,
             "time": p.get("timestamp"),
@@ -122,9 +127,40 @@ def fetch_nws(lat, lon):
             for a in alerts
         ],
         "obs": obs,
+        "observed": observed,
         # Chance of precipitation by local hour, keyed "YYYY-MM-DDTHH" to match the model times.
         "hourly_pop": {p["startTime"][:13]: (p.get("probabilityOfPrecipitation") or {}).get("value") for p in hourly},
     }
+
+
+def fetch_observed(station_id):
+    """The station's real daytime high and overnight low for the most recent complete day.
+
+    Uses the same definitions as the forecast (high: midnight to midnight; low: 6 pm
+    to 9 am next morning), so the log can grade each model against what happened.
+    """
+    now = datetime.now(LOCAL_TZ)
+    day = (now - timedelta(days=1 if now.hour >= 10 else 2)).date()
+    start = datetime(day.year, day.month, day.day, tzinfo=LOCAL_TZ)
+    end = start + timedelta(hours=33)  # through 9 am the next morning
+    params = urllib.parse.urlencode({"start": start.isoformat(), "end": end.isoformat(), "limit": 500})
+    feats = get_json(f"https://api.weather.gov/stations/{station_id}/observations?{params}", NWS_HEADERS)["features"]
+    day_temps, night_temps = [], []
+    for f in feats:
+        p = f["properties"]
+        c = (p.get("temperature") or {}).get("value")
+        if c is None:
+            continue
+        t = datetime.fromisoformat(p["timestamp"]).astimezone(LOCAL_TZ)
+        f_ = c * 9 / 5 + 32
+        if t.date() == day:
+            day_temps.append(f_)
+        if (t.date() == day and t.hour >= 18) or (t.date() > day and t.hour < 9):
+            night_temps.append(f_)
+    if len(day_temps) < 20 or len(night_temps) < 10:  # too many gaps to trust
+        return None
+    return {"date": day.isoformat(), "station": station_id,
+            "high": round(max(day_temps)), "low": round(min(night_temps)), "readings": len(day_temps)}
 
 
 # ---------- 3. Blending ----------
@@ -277,10 +313,12 @@ def run():
             "models": [MODELS[m] for m in per_model],
             "hourly": hourly, "daily": daily,
             "by_model": {MODELS[m]: days for m, days in by_model.items()},
-            "nws": {k: v for k, v in nws.items() if k != "hourly_pop"} if nws else None,
+            "nws": {k: v for k, v in nws.items() if k not in ("hourly_pop", "observed")} if nws else None,
         }
         # The log keeps every forecast and observation, so we can score models later.
-        log = {"place": key, "run_at": run_at, "by_model": by_model, "obs": nws["obs"] if nws else None}
+        log = {"place": key, "run_at": run_at, "by_model": by_model, "obs": nws["obs"] if nws else None,
+               # The station's actual high and low for the last complete day, to grade the models.
+               "observed": nws["observed"] if nws else None}
         with open(os.path.join(DATA_DIR, f"{key}.json"), "w") as f:
             json.dump(current, f)
         with open(os.path.join(LOG_DIR, f"{key}.jsonl"), "a") as f:
