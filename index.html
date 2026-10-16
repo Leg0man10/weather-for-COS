@@ -124,7 +124,7 @@ header h1 span { color: var(--granite); }
 .bar span { position: absolute; top: 0; bottom: 0; border-radius: 4px; background: linear-gradient(90deg, var(--temp-band), var(--temp)); }
 .day .hilo { text-align: right; white-space: nowrap; }
 .day .hilo b { font-family: var(--font-display); font-size: 1.15rem; }
-.day .hilo span { color: var(--muted); }
+.day .hilo span:not(.pill) { color: var(--muted); }
 .day .pill { font-size: .7rem; padding: 1px 8px; justify-self: end; }
 
 /* Models table */
@@ -171,6 +171,19 @@ const fmtHour = h => (h % 12 || 12) + (h < 12 ? "a" : "p");
 const dowOf = d => DOW[new Date(d + "T12:00:00Z").getUTCDay()];
 const todayCO = () => new Intl.DateTimeFormat("en-CA", { timeZone: "America/Denver" }).format(new Date());
 const confWord = { high: "Models agree", medium: "Some disagreement", low: "Models disagree" };
+// Temperature confidence: the larger of the high and low spreads across models.
+const tempSpread = r => Math.max(r.high_range[1] - r.high_range[0], r.low_range[1] - r.low_range[0]);
+const plusMinus = r => Math.ceil(tempSpread(r) / 2);
+function tempDetail(r) {
+  const hs = r.high_range[1] - r.high_range[0], ls = r.low_range[1] - r.low_range[0];
+  if (r.confidence === "high") return `All within ${Math.max(hs, ls)}° of each other`;
+  return ls >= hs ? `Mostly on tonight's low: ${r.low_range[0]}–${r.low_range[1]}°` : `Mostly on the high: ${r.high_range[0]}–${r.high_range[1]}°`;
+}
+function rainDetail(r) {
+  if (!r.wet_models) return `<span class="pill c-high">Dry</span><span class="range">None of the ${r.models} models expect any</span>`;
+  const word = r.wet_models === r.models ? "All" : `${r.wet_models} of`;
+  return `<span class="pill" style="color:var(--rain)">${word} ${r.models} models</span><span class="range">expect some${r.precip >= 0.01 ? `, about ${inches(r.precip)}` : ""}</span>`;
+}
 
 function ago(iso) {
   const mins = Math.round((Date.now() - new Date(iso.replace("Z", ":00Z")).getTime()) / 60000);
@@ -209,7 +222,8 @@ function render() {
     ${t ? `<div class="hl">
       <div><span class="label">High today</span><span class="big num">${t.high}°</span><span class="range">models: ${t.high_range[0]}–${t.high_range[1]}°</span></div>
       <div><span class="label">Low tonight</span><span class="big num">${t.low}°</span><span class="range">models: ${t.low_range[0]}–${t.low_range[1]}°</span></div>
-      <div><span class="label">Confidence</span><span class="pill c-${t.confidence}">${confWord[t.confidence]}</span><span class="range"><span class="${t.wet_models ? "rain" : ""}">${t.wet_models} of ${t.models}</span> models show rain or snow</span></div>
+      <div><span class="label">Temperature</span><span class="pill c-${t.confidence}">${confWord[t.confidence]}</span><span class="range">${tempDetail(t)}</span></div>
+      <div><span class="label">Rain or snow today</span>${rainDetail(t)}</div>
     </div>` : ""}
     ${compareLine(d, other, today)}
   </section>`;
@@ -228,7 +242,7 @@ function render() {
     <ul>
       <li><b>The forecast number</b> is the median of the models, so one model that is way off barely moves it.</li>
       <li><b>The range</b> is the lowest and highest model. A narrow range means the models agree.</li>
-      <li><b>Confidence</b>: models within 4° of each other is "agree", within 8° is "some disagreement", more than that is "disagree".</li>
+      <li><b>Temperature confidence</b> is about temperature only: models within 4° of each other is "agree", within 8° is "some disagreement", more than that is "disagree". In the week list, "Temp ±4°" means the models are spread about 4° either side of the forecast.</li>
       <li><b>Chance of rain or snow</b> comes from the National Weather Service: the chance of at least 0.01 in at a given spot in that hour.</li>
       <li><b>Inches</b> come from the models. "Expected" is the median model; "up to" is the wettest model. Rain amounts are liquid; snow is shown separately as snow depth (roughly 10 times the liquid amount).</li>
       <li><b>Low tonight</b> is the coldest point from 6 pm to 9 am, which is how people read a low.</li>
@@ -391,7 +405,7 @@ function week(d, nws) {
       <div class="txt">${esc(p ? p.short : (night ? night.short : ""))}
         <small>${pop != null ? `<span class="${pop >= 20 ? "rain" : ""}">${pop}% chance</span> · ` : ""}${r.precip != null ? (r.precip >= 0.01 ? `<span class="rain">${inches(r.precip)}</span>${r.precip_hi > r.precip ? ` (up to ${inches(r.precip_hi)})` : ""}` : r.precip_hi >= 0.01 ? `none (up to ${inches(r.precip_hi)})` : "no rain expected") : `${r.wet_models} of ${r.models} models show rain/snow`}${r.snow >= 0.1 ? ` · <span class="snow">${r.snow.toFixed(1)} in snow</span>` : ""}</small>
         <div class="bar" aria-hidden="true"><span style="left:${pct(r.low)}%;right:${100 - pct(r.high)}%"></span></div></div>
-      <div class="hilo"><b class="num">${r.high}°</b> <span class="num">${r.low}°</span><br><span class="pill c-${r.confidence}">${r.confidence === "high" ? "Agree" : r.confidence === "medium" ? "Some spread" : "Disagree"}</span></div>
+      <div class="hilo"><b class="num">${r.high}°</b> <span class="num">${r.low}°</span><br><span class="pill c-${r.confidence}" title="How far apart the models are on temperature">Temp ±${plusMinus(r)}°</span></div>
     </div>`;
   }).join("");
 }

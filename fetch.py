@@ -247,7 +247,10 @@ def summarize(hourly, daily, nws):
     if peak_gust >= 35:
         parts.append(f"Gusts up to {peak_gust} mph.")
     if today["confidence"] == "low":
-        parts.append("The models disagree today, so check back later.")
+        hs = today["high_range"][1] - today["high_range"][0]
+        ls = today["low_range"][1] - today["low_range"][0]
+        which = f"tonight's low ({today['low_range'][0]}–{today['low_range'][1]}°)" if ls >= hs else f"today's high ({today['high_range'][0]}–{today['high_range'][1]}°)"
+        parts.append(f"The models disagree on {which}, so check back later.")
     if nws and nws["alerts"]:
         parts.append(f"Active alert: {nws['alerts'][0]['event']}.")
     return " ".join(parts)
