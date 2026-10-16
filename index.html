@@ -107,6 +107,9 @@ header h1 span { color: var(--granite); }
 .precip-note b.rain { color: var(--rain); }
 .precip-note b.snow { color: var(--snow); }
 .chart-box .note { fill: var(--muted); font-family: var(--font-body); font-size: 13px; }
+.chart-box .now-line { stroke: var(--fg); stroke-width: 1.5; }
+.chart-box .now-label { fill: var(--fg); font-weight: 500; }
+.chart-box .past { fill: var(--bg); opacity: .55; }
 .legend i { display: inline-block; width: 14px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
 
 /* Week */
@@ -152,7 +155,7 @@ footer { font-size: .8rem; color: var(--muted); }
   <main id="app" class="wrap" style="padding:0;gap:22px">
     <div class="empty">Loading the latest blended forecast…</div>
   </main>
-  <footer>Forecasts blended from up to 6 weather models (via Open-Meteo) and the National Weather Service. Updated every hour.</footer>
+  <footer>Forecasts blended from up to 6 weather models (via Open-Meteo) and the National Weather Service. Updated about every hour.</footer>
 </div>
 
 <script>
@@ -210,7 +213,7 @@ function render() {
     </div>` : ""}
     ${compareLine(d, other, today)}
   </section>`;
-  if (staleHrs > 3) html += `<p class="stale">This forecast is ${Math.round(staleHrs)} hours old. The automatic refresh may have failed.</p>`;
+  if (staleHrs > 8) html += `<p class="stale">This forecast is ${Math.round(staleHrs)} hours old. The automatic refresh may have failed.</p>`;
 
   html += `<section><h2>Temperature, next 48 hours</h2>${tempChart(d.hourly)}
     <div class="legend"><span><i style="background:var(--temp)"></i>Blended temperature</span><span><i style="background:var(--temp-band)"></i>Range across models</span></div></section>`;
@@ -234,6 +237,7 @@ function render() {
   </details>`;
   html += `<p class="label" style="margin:0">Updated ${ago(d.updated)}</p>`;
   app.innerHTML = html;
+  updateNow();
 }
 
 function compareLine(d, other, today) {
@@ -247,6 +251,36 @@ function compareLine(d, other, today) {
   if (Math.abs(dg) >= 5) parts.push(`gusts ${Math.abs(dg)} mph ${dg > 0 ? "stronger" : "weaker"}`);
   return `<p class="compare">Compared with ${esc(other.place)}: ${parts.length ? parts.join(", ") : "about the same"}.</p>`;
 }
+
+// "Now" marker. Forecast times are Colorado local; compare them with the current Colorado time.
+const coParts = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Denver", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+function coNowMs() {
+  const p = Object.fromEntries(coParts.formatToParts(new Date()).map(x => [x.type, x.value]));
+  return Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute);
+}
+const localMs = t => Date.UTC(+t.slice(0, 4), +t.slice(5, 7) - 1, +t.slice(8, 10), +t.slice(11, 13), +t.slice(14, 16) || 0);
+
+function nowLayer(rows, L, W, R, top, bottom) {
+  return `<g class="now-layer" data-t0="${rows[0].t}" data-n="${rows.length}" data-l="${L}" data-w="${W}" data-r="${R}" data-top="${top}" data-bottom="${bottom}"></g>`;
+}
+
+function updateNow() {
+  const now = coNowMs();
+  const d = new Date(now);
+  const label = `Now ${d.getUTCHours() % 12 || 12}:${String(d.getUTCMinutes()).padStart(2, "0")}${d.getUTCHours() < 12 ? "a" : "p"}`;
+  document.querySelectorAll(".now-layer").forEach(g => {
+    const { t0, n, l, w, r, top, bottom } = g.dataset;
+    const hours = (now - localMs(t0)) / 3.6e6;
+    if (hours < 0 || hours > n - 1) { g.innerHTML = ""; return; }
+    const x = +l + (hours / (n - 1)) * (w - l - r);
+    const anchor = x > w - 70 ? "end" : x < +l + 40 ? "start" : "middle";
+    g.innerHTML = `<rect class="past" x="${l}" y="${top}" width="${Math.max(0, x - l)}" height="${bottom - top}"/>`
+      + `<line class="now-line" x1="${x}" x2="${x}" y1="${top - 4}" y2="${bottom}"/>`
+      + `<circle cx="${x}" cy="${top - 4}" r="3" fill="var(--fg)"/>`
+      + `<text class="now-label" x="${x}" y="${top - 9}" text-anchor="${anchor}">${label}</text>`;
+  });
+}
+setInterval(updateNow, 60 * 1000);
 
 // Shared time axis: a dashed guide and label every 6 hours, with gusts on the temperature chart.
 function timeAxis(rows, x, top, bottom, H, withGust) {
@@ -281,7 +315,7 @@ function tempChart(rows) {
     if (hourOf(r.t) % 6 !== 0) return;
     s += `<circle cx="${x(i)}" cy="${y(r.temp)}" r="3.5" fill="var(--temp)"/><text class="tlabel" x="${x(i)}" y="${y(r.temp) - 8}" text-anchor="middle">${r.temp}°</text>`;
   });
-  s += `<text x="${L}" y="12">${fmtHour(hourOf(rows[0].t))} now</text>`;
+  s += nowLayer(rows, L, W, R, T, T + plotH);
   return `<div class="chart-box">${s}</svg></div>`;
 }
 
@@ -305,7 +339,7 @@ function precipNote(rows) {
 function precipChart(rows) {
   if (!rows.length) return `<div class="empty">No hourly data.</div>`;
   // Top panel: chance (%) as a line. Bottom panel: amount (inches) as bars.
-  const W = 680, H = 230, L = 40, R = 10, T = 14, popH = 80, gap = 26, amtTop = T + popH + gap, amtH = 70;
+  const W = 680, H = 240, L = 40, R = 10, T = 24, popH = 80, gap = 26, amtTop = T + popH + gap, amtH = 70;
   const x = i => L + (i / (rows.length - 1)) * (W - L - R);
   const yp = pct => T + (1 - Math.min(pct, 100) / 100) * popH;
   const maxAmt = Math.max(0.1, ...rows.map(r => r.precip_hi || 0));
@@ -338,6 +372,7 @@ function precipChart(rows) {
     if ((r.precip || 0) >= 0.005) s += `<rect x="${bx}" y="${ya(Math.min(r.precip, top))}" width="${w}" height="${ya(0) - ya(Math.min(r.precip, top))}" fill="${(r.snow || 0) > 0 ? "var(--snow)" : "var(--rain)"}"/>`;
   });
   if (!anyAmt) s += `<text class="note" x="${(L + W - R) / 2}" y="${amtTop + amtH / 2 + 4}" text-anchor="middle">No model expects measurable rain or snow.</text>`;
+  s += nowLayer(rows, L, W, R, T, amtTop + amtH);
   return `<div class="chart-box">${s}</svg></div>`;
 }
 
