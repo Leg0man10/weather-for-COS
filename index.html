@@ -110,6 +110,11 @@ header h1 span { color: var(--granite); }
 .chart-box .now-line { stroke: var(--fg); stroke-width: 1.5; }
 .chart-box .now-label { fill: var(--fg); font-weight: 500; }
 .chart-box .past { fill: var(--bg); opacity: .55; }
+.chart-box svg.hoverable { cursor: crosshair; }
+.chart-box .hover-line { stroke: var(--fg); stroke-width: 1; opacity: .7; }
+.chart-box .tip-bg { fill: var(--surface); stroke: var(--line); }
+.chart-box .tip-1 { fill: var(--fg); font-weight: 500; font-size: 12px; }
+.chart-box .tip-2 { fill: var(--muted); font-size: 11px; }
 .legend i { display: inline-block; width: 14px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
 
 /* Week */
@@ -296,6 +301,75 @@ function updateNow() {
 }
 setInterval(updateNow, 60 * 1000);
 
+// Hover / tap readout. The line follows the pointer continuously; values are
+// interpolated between the hourly forecast points so it moves smoothly.
+const lerp = (a, b, f) => a == null || b == null ? (f < 0.5 ? a : b) : a + (b - a) * f;
+function fmtWhen(ms) {
+  const d = new Date(Math.round(ms / 3e5) * 3e5);  // nearest 5 minutes
+  const h = d.getUTCHours();
+  return `${DOW[d.getUTCDay()]} ${h % 12 || 12}:${String(d.getUTCMinutes()).padStart(2, "0")}${h < 12 ? "a" : "p"}`;
+}
+
+function drawHover(hours) {
+  const rows = (state.data[state.place] || {}).hourly;
+  if (!rows || !rows.length) return;
+  const n = rows.length;
+  hours = Math.max(0, Math.min(n - 1, hours));
+  const i = Math.min(Math.floor(hours), n - 2), f = hours - i, a = rows[i], b = rows[i + 1] || a;
+  const near = f < 0.5 ? a : b;
+  const when = fmtWhen(localMs(rows[0].t) + hours * 3.6e6);
+  document.querySelectorAll(".hover-layer").forEach(g => {
+    const k = g.dataset, L = +k.l, W = +k.w, R = +k.r, top = +k.top, bottom = +k.bottom, ph = +k.ph;
+    const x = L + (hours / (n - 1)) * (W - L - R);
+    let dotY, line1, line2;
+    if (k.kind === "temp") {
+      const lo = +k.lo, hi = +k.hi, temp = lerp(a.temp, b.temp, f);
+      dotY = top + (1 - (temp - lo) / (hi - lo)) * ph;
+      line1 = `${when} · ${Math.round(temp)}°`;
+      line2 = `Models ${Math.round(lerp(a.lo, b.lo, f))}–${Math.round(lerp(a.hi, b.hi, f))}°${near.gust ? ` · gusts ${near.gust} mph` : ""}`;
+    } else {
+      const pop = lerp(a.pop, b.pop, f);
+      dotY = pop == null ? null : top + (1 - Math.min(pop, 100) / 100) * ph;
+      line1 = `${when} · ${pop == null ? "chance n/a" : Math.round(pop) + "% chance"}`;
+      line2 = (near.precip || 0) >= 0.01 ? `${inches(near.precip)} that hour${(near.snow || 0) > 0 ? " (snow)" : ""}` : (near.precip_hi || 0) >= 0.01 ? `none expected (up to ${inches(near.precip_hi)})` : "none expected that hour";
+    }
+    const boxW = Math.max(line1.length * 7.4, line2.length * 6.8) + 16, boxH = 36;
+    const bx = x + 12 + boxW > W - R ? x - 12 - boxW : x + 12;
+    g.innerHTML = `<line class="hover-line" x1="${x}" x2="${x}" y1="${top}" y2="${bottom}"/>`
+      + (dotY == null ? "" : `<circle cx="${x}" cy="${dotY}" r="4.5" fill="var(--surface)" stroke="${k.kind === "temp" ? "var(--temp)" : "var(--rain)"}" stroke-width="2.5"/>`)
+      + `<rect class="tip-bg" x="${bx}" y="${top + 2}" width="${boxW}" height="${boxH}" rx="6"/>`
+      + `<text class="tip-1" x="${bx + 8}" y="${top + 17}">${line1}</text>`
+      + `<text class="tip-2" x="${bx + 8}" y="${top + 31}">${esc(line2)}</text>`;
+  });
+}
+function clearHover() { document.querySelectorAll(".hover-layer").forEach(g => { g.innerHTML = ""; }); }
+
+let hoverFrame = null;
+function hoursAt(svg, e) {
+  const g = svg.querySelector(".hover-layer"), k = g.dataset;
+  const pt = new DOMPoint(e.clientX, e.clientY).matrixTransform(svg.getScreenCTM().inverse());
+  const n = (state.data[state.place] || {}).hourly?.length || 2;
+  return ((pt.x - +k.l) / (+k.w - +k.l - +k.r)) * (n - 1);
+}
+document.addEventListener("pointermove", e => {
+  if (e.pointerType !== "mouse") return;
+  const svg = e.target.closest && e.target.closest("svg.hoverable");
+  if (!svg) return;
+  const h = hoursAt(svg, e);
+  cancelAnimationFrame(hoverFrame);
+  hoverFrame = requestAnimationFrame(() => drawHover(h));
+});
+document.addEventListener("pointerout", e => {
+  if (e.pointerType === "mouse" && e.target.closest && e.target.closest("svg.hoverable") && !(e.relatedTarget && e.relatedTarget.closest && e.relatedTarget.closest("svg.hoverable"))) {
+    cancelAnimationFrame(hoverFrame); clearHover();
+  }
+});
+// Touch: tap a chart to place the line; tap anywhere else to clear it.
+document.addEventListener("click", e => {
+  const svg = e.target.closest && e.target.closest("svg.hoverable");
+  if (svg) drawHover(hoursAt(svg, e)); else if (!e.target.closest(".chart-box")) clearHover();
+});
+
 // Shared time axis: a dashed guide and label every 6 hours, with gusts on the temperature chart.
 function timeAxis(rows, x, top, bottom, H, withGust) {
   let s = "";
@@ -330,7 +404,8 @@ function tempChart(rows) {
     s += `<circle cx="${x(i)}" cy="${y(r.temp)}" r="3.5" fill="var(--temp)"/><text class="tlabel" x="${x(i)}" y="${y(r.temp) - 8}" text-anchor="middle">${r.temp}°</text>`;
   });
   s += nowLayer(rows, L, W, R, T, T + plotH);
-  return `<div class="chart-box">${s}</svg></div>`;
+  s += `<g class="hover-layer" data-kind="temp" data-l="${L}" data-w="${W}" data-r="${R}" data-top="${T}" data-bottom="${T + plotH}" data-lo="${lo}" data-hi="${hi}" data-ph="${plotH}"></g>`;
+  return `<div class="chart-box">${s.replace("<svg ", '<svg class="hoverable" ')}</svg></div>`;
 }
 
 // Inches: two decimals for rain, one for snow; "a trace" for tiny amounts.
@@ -387,7 +462,8 @@ function precipChart(rows) {
   });
   if (!anyAmt) s += `<text class="note" x="${(L + W - R) / 2}" y="${amtTop + amtH / 2 + 4}" text-anchor="middle">No model expects measurable rain or snow.</text>`;
   s += nowLayer(rows, L, W, R, T, amtTop + amtH);
-  return `<div class="chart-box">${s}</svg></div>`;
+  s += `<g class="hover-layer" data-kind="rain" data-l="${L}" data-w="${W}" data-r="${R}" data-top="${T}" data-bottom="${amtTop + amtH}" data-ph="${popH}"></g>`;
+  return `<div class="chart-box">${s.replace("<svg ", '<svg class="hoverable" ')}</svg></div>`;
 }
 
 function week(d, nws) {
