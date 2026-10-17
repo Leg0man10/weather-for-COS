@@ -1,0 +1,53 @@
+name: Morning message
+
+# GitHub often runs scheduled jobs late or skips them, so this tries several times.
+# morning.py sends at most once per day, between 4 and 9 am Colorado time, so the
+# extra tries cost nothing. Times are UTC: 10:03 UTC is 4:03 am in summer (MDT)
+# and 3:03 am in winter (MST), when that first try simply does nothing.
+on:
+  schedule:
+    - cron: "3,33 10-12 * * *"
+    - cron: "3 13,14 * * *"
+  workflow_dispatch:        # run by hand from the Actions tab: sends immediately (a test)
+
+permissions:
+  contents: write           # to record that today's message was sent
+
+concurrency:
+  group: morning
+  cancel-in-progress: false
+
+jobs:
+  morning:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Get the latest forecast
+        run: python3 fetch.py
+
+      - name: Send the morning message
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+        run: python3 morning.py ${{ github.event_name == 'workflow_dispatch' && '--force' || '' }}
+
+      - name: Record that it was sent
+        run: |
+          git config user.name "weather-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/morning_sent.txt 2>/dev/null || true
+          if git diff --cached --quiet; then
+            echo "Nothing to record."
+            exit 0
+          fi
+          git commit -m "Morning message sent $(date -u +%Y-%m-%d)"
+          for i in 1 2 3; do
+            git pull --rebase origin main && git push origin HEAD:main && exit 0
+            sleep 5
+          done
+          exit 1

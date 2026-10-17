@@ -20,7 +20,9 @@ National Weather Service, then shows:
 | `.github/workflows/refresh.yml` | GitHub Actions runs `fetch.py` every hour and commits the new data. Free. |
 | `index.html` | The page. GitHub Pages serves it, and it reads the `data/` files. |
 
-Run it by hand: **Actions** tab → **Refresh forecast** → **Run workflow**.
+| `morning.py` + `.github/workflows/morning.yml` | Sends a morning breakdown as a push notification through [ntfy](https://ntfy.sh), once a day around 4–5 am Colorado time. The channel name is kept in the `NTFY_TOPIC` repository secret, not in the code. |
+
+Run either by hand: **Actions** tab → pick the workflow → **Run workflow**. Running **Morning message** by hand sends one immediately.
 
 ## Accuracy scoring
 
